@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+/*
+ * Prevsol Digital design tokens.
+ * Palette taken from the company profile: deep navy, signal red, off-white.
+ */
+@theme {
+  --color-navy-50: #f2f4fa;
+  --color-navy-100: #e2e7f3;
+  --color-navy-200: #c7d0e8;
+  --color-navy-300: #9aabd6;
+  --color-navy-400: #6780bf;
+  --color-navy-500: #4460a7;
+  --color-navy-600: #33488a;
+  --color-navy-700: #2a3a70;
+  --color-navy-800: #222d55;
+  --color-navy-900: #1a1f47;
+  --color-navy-950: #12163a;
+
+  --color-signal-50: #fef2f3;
+  --color-signal-100: #fde3e5;
+  --color-signal-200: #fbcbd0;
+  --color-signal-300: #f7a6ae;
+  --color-signal-400: #f0737f;
+  --color-signal-500: #e34656;
+  --color-signal-600: #cf2438;
+  --color-signal-700: #ae1b2c;
+  --color-signal-800: #911a29;
+  --color-signal-900: #7a1a28;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-oswald), var(--font-inter), sans-serif;
+
+  --shadow-card: 0 1px 2px rgb(18 22 58 / 0.04), 0 8px 24px rgb(18 22 58 / 0.06);
+  --shadow-card-hover: 0 2px 4px rgb(18 22 58 / 0.06),
+    0 16px 40px rgb(18 22 58 / 0.12);
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: var(--color-navy-950);
+  --surface: var(--color-navy-50);
+  --border: var(--color-navy-100);
+  --muted: #5b647f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0c0f26;
+    --foreground: #eef1f8;
+    --surface: #151a38;
+    --border: #262c4f;
+    --muted: #a3abc4;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-line: var(--border);
+  --color-muted: var(--muted);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Display headings use the condensed face from the company profile. */
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+/* The navy + red double rule that appears under every heading in the profile. */
+.rule-accent {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.rule-accent::before {
+  content: "";
+  width: 2.5rem;
+  height: 0.3rem;
+  background: var(--color-navy-900);
+}
+.rule-accent::after {
+  content: "";
+  width: 5.5rem;
+  height: 0.3rem;
+  background: var(--color-signal-600);
+}
+@media (prefers-color-scheme: dark) {
+  .rule-accent::before {
+    background: var(--color-navy-300);
+  }
+}
+
+/* On navy sections the dark-navy bar is invisible, so use white instead. */
+.rule-accent-inverse::before {
+  background: #ffffff;
+}
+
+/* Offset anchor targets so the sticky header doesn't cover them. */
+html {
+  scroll-padding-top: 6rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

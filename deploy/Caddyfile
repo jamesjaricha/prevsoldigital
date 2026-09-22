@@ -1,0 +1,41 @@
+# Caddy configuration for Prevsol Digital.
+#
+# Caddy obtains and renews TLS certificates automatically. Replace the domain
+# below with your own before reloading:
+#
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo nano /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+
+prevsoldigital.com, www.prevsoldigital.com {
+	reverse_proxy localhost:3000
+
+	encode gzip zstd
+
+	header {
+		# Force HTTPS for two years, including subdomains.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		# Do not advertise the server software.
+		-Server
+	}
+
+	# The payment callback must never be cached.
+	@paynow path /api/paynow/*
+	header @paynow Cache-Control "no-store"
+
+	log {
+		output file /var/log/caddy/prevsol.log {
+			roll_size 10mb
+			roll_keep 10
+		}
+	}
+}
+
+# Redirect the bare www to canonical, if you prefer the apex domain.
+# www.prevsoldigital.com {
+# 	redir https://prevsoldigital.com{uri} permanent
+# }

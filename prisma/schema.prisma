@@ -1,0 +1,451 @@
+// Prevsol Digital — client billing portal schema.
+//
+// Deliberately a small, owned replacement for WHMCS: clients, the services
+// they buy, invoices, payments, support tickets and notifications. Everything
+// the portal UI already renders has a table behind it here.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- accounts
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String
+  company       String?
+  phone         String?
+  address       String?
+  city          String?
+  /// Human-facing client reference, e.g. PVS-10428.
+  clientRef     String    @unique
+  role          Role      @default(CLIENT)
+  emailVerified DateTime?
+  /// TOTP secret, set once the client enables two-factor auth.
+  totpSecret    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions      Session[]
+  services      Service[]
+  invoices      Invoice[]
+  payments      Payment[]
+  tickets       Ticket[]
+  notifications Notification[]
+  orders        Order[]
+  domains       Domain[]
+  tokens        VerificationToken[]
+  auditEvents   AuditEvent[]
+
+  @@index([email])
+}
+
+enum Role {
+  CLIENT
+  STAFF
+  ADMIN
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  /// SHA-256 of the cookie value — the raw token is never stored.
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  userAgent String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Email verification and password reset tokens.
+model VerificationToken {
+  id        String       @id @default(cuid())
+  tokenHash String       @unique
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose   TokenPurpose
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+
+  @@index([userId])
+}
+
+enum TokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+// ---------------------------------------------------------------- catalogue
+
+/// A purchasable item. Mirrors src/content/products.ts so the shop and the
+/// billing system agree on price without hand-syncing.
+model Product {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  category    String
+  /// Price in cents, to avoid floating point money.
+  priceCents  Int
+  /// "mo", "yr", "hr", or null for a one-off.
+  billingUnit String?
+  summary     String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orderItems OrderItem[]
+  services   Service[]
+}
+
+// ------------------------------------------------------------------ orders
+
+model Order {
+  id             String      @id @default(cuid())
+  reference      String      @unique
+  userId         String
+  user           User        @relation(fields: [userId], references: [id])
+  status         OrderStatus @default(PENDING)
+  /// Snapshot of billing details at the time of the order.
+  billingName    String
+  billingEmail   String
+  billingPhone   String
+  billingCompany String?
+  billingAddress String?
+  billingCity    String?
+  notes          String?
+  subtotalCents  Int
+  discountCents  Int         @default(0)
+  taxCents       Int         @default(0)
+  totalCents     Int
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  items   OrderItem[]
+  invoice Invoice?
+
+  @@index([userId])
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  PROVISIONED
+  CANCELLED
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String?
+  product     Product? @relation(fields: [productId], references: [id])
+  /// Free-text for items with no catalogue entry, e.g. a specific domain.
+  name        String
+  detail      String?
+  priceCents  Int
+  billingUnit String?
+  quantity    Int      @default(1)
+
+  @@index([orderId])
+}
+
+// --------------------------------------------------------------- provisioned
+
+/// An active thing the client is paying for.
+model Service {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId    String?
+  product      Product?      @relation(fields: [productId], references: [id])
+  name         String
+  type         ServiceType
+  status       ServiceStatus @default(PENDING)
+  detail       String?
+  priceCents   Int
+  cycle        BillingCycle
+  registeredAt DateTime      @default(now())
+  nextDueAt    DateTime
+  cancelledAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([nextDueAt])
+}
+
+enum ServiceType {
+  HOSTING
+  DOMAIN
+  WEBSITE
+  MARKETING
+  COMPLIANCE
+  EMAIL
+  SOFTWARE
+  OTHER
+}
+
+enum ServiceStatus {
+  PENDING
+  ACTIVE
+  EXPIRING_SOON
+  SUSPENDED
+  TERMINATED
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUALLY
+  ONE_OFF
+}
+
+/// Domains tracked separately so we can record registrar state and expiry.
+model Domain {
+  id           String        @id @default(cuid())
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fqdn         String        @unique
+  status       ServiceStatus @default(PENDING)
+  autoRenew    Boolean       @default(true)
+  registeredAt DateTime      @default(now())
+  expiresAt    DateTime
+  /// Registrar order id, once a registrar API is connected.
+  registrarRef String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------- invoicing
+
+model Invoice {
+  id            String        @id @default(cuid())
+  number        String        @unique
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  orderId       String?       @unique
+  order         Order?        @relation(fields: [orderId], references: [id])
+  status        InvoiceStatus @default(UNPAID)
+  issuedAt      DateTime      @default(now())
+  dueAt         DateTime
+  paidAt        DateTime?
+  subtotalCents Int
+  discountCents Int           @default(0)
+  taxCents      Int           @default(0)
+  totalCents    Int
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  items    InvoiceItem[]
+  payments Payment[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([dueAt])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  UNPAID
+  OVERDUE
+  PAID
+  CANCELLED
+  REFUNDED
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  amountCents Int
+  quantity    Int     @default(1)
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice       @relation(fields: [invoiceId], references: [id])
+  userId      String
+  user        User          @relation(fields: [userId], references: [id])
+  method      PaymentMethod
+  status      PaymentStatus @default(PENDING)
+  amountCents Int
+  currency    String        @default("USD")
+  /// Gateway reference — Paynow reference, or a manual note.
+  /// Unique: the callback matches a payment by this value, so a duplicate
+  /// would let one payment settle a different order's invoice.
+  gatewayRef  String?       @unique
+  /// Paynow polling URL, used to confirm status server-side.
+  pollUrl     String?
+  paidAt      DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([invoiceId])
+  @@index([userId])
+  @@index([status])
+}
+
+enum PaymentMethod {
+  PAYNOW_ECOCASH
+  PAYNOW_ONEMONEY
+  PAYNOW_CARD
+  BANK_TRANSFER
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  CANCELLED
+  FAILED
+  REFUNDED
+}
+
+// ----------------------------------------------------------------- support
+
+model Ticket {
+  id             String       @id @default(cuid())
+  reference      String       @unique
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id])
+  /// Guests can open tickets, so contact details are stored inline.
+  name           String
+  email          String
+  department     Department
+  priority       Priority     @default(MEDIUM)
+  status         TicketStatus @default(OPEN)
+  subject        String
+  relatedService String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  messages TicketMessage[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+enum Department {
+  TECHNICAL
+  BILLING
+  SALES
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  AWAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+model TicketMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromStaff Boolean  @default(false)
+  author    String
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+// ------------------------------------------------------------ notifications
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+  @@index([readAt])
+}
+
+enum NotificationType {
+  INVOICE
+  PAYMENT
+  DUE
+  DOMAIN
+  HOSTING
+  RENEWAL
+  SUSPENSION
+  TICKET
+  SECURITY
+}
+
+// ------------------------------------------------------------------- leads
+
+/// Contact and quote submissions. Kept so nothing is lost if email fails.
+model Enquiry {
+  id        String      @id @default(cuid())
+  kind      EnquiryKind
+  name      String
+  email     String
+  phone     String?
+  company   String?
+  service   String?
+  subject   String?
+  message   String?
+  /// Service-specific quote answers, stored as JSON.
+  answers   Json?
+  budget    String?
+  timeline  String?
+  handledAt DateTime?
+  createdAt DateTime    @default(now())
+
+  @@index([kind])
+  @@index([createdAt])
+}
+
+enum EnquiryKind {
+  CONTACT
+  QUOTE
+  NEWSLETTER
+}
+
+/// Security-relevant events, useful for the Cyber and Data Protection Act.
+model AuditEvent {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  detail    String?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
